@@ -3,7 +3,7 @@ provider "aws" {
 }
 
 module "terraform-aws-redshift" {
-  source = "../"
+  source = "../../"
 
   enable              = true
   region              = "us-east-1"
