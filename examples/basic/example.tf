@@ -13,6 +13,7 @@ module "terraform-aws-redshift" {
   managedby           = "terraform"
   label_order         = ["name", "environment"]
   skip_final_snapshot = true
+  encryption          = true
   tags = {
     Environment = "dev"
     ManagedBy   = "terraform"

@@ -14,7 +14,9 @@ module "labels" {
 }
 
 resource "aws_kms_key" "redshift" {
+  count              = var.encryption ? 1 : 0
   enable_key_rotation = true
+  
 }
 
 # Create Security Group only if not using an existing one and if enabled
@@ -82,13 +84,13 @@ resource "aws_redshift_cluster" "this" {
   number_of_nodes                     = var.cluster_config.number_of_nodes
   skip_final_snapshot                 = var.skip_final_snapshot
   publicly_accessible                 = var.cluster_config.publicly_accessible
-  kms_key_id                          = aws_kms_key.redshift.key_id
+  kms_key_id                          = var.encryption ? aws_kms_key.redshift[0].arn : null
+  encrypted                           = var.encryption
   automated_snapshot_retention_period = var.cluster_config.automated_snapshot_retention_period
   availability_zone                   = var.cluster_config.availability_zone
   cluster_subnet_group_name           = var.use_existing_subnet_group ? var.existing_subnet_group_name : aws_redshift_subnet_group.this[0].name
   vpc_security_group_ids              = var.use_existing_security_group ? [var.existing_security_group_id] : [aws_security_group.this[0].id]
   tags                                = var.tags
-  # final_snapshot_identifier = var.final_snapshot_identifier
 }
 
 # Store the generated password in Secrets Manager after creating the Redshift cluster

@@ -224,3 +224,8 @@ variable "skip_final_snapshot" {
   type        = bool
 }
 
+variable "encryption" {
+  description = "Whether the data in the cluster is encrypted."
+  type        = bool
+}
+
