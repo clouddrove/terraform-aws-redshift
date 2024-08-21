@@ -14,9 +14,9 @@ module "labels" {
 }
 
 resource "aws_kms_key" "redshift" {
-  count              = var.encryption ? 1 : 0
+  count               = var.encryption ? 1 : 0
   enable_key_rotation = true
-  
+
 }
 
 # Create Security Group only if not using an existing one and if enabled
