@@ -13,6 +13,10 @@ module "labels" {
   label_order = var.label_order
 }
 
+resource "aws_kms_key" "redshift" {
+  enable_key_rotation = true
+}
+
 # Create Security Group only if not using an existing one and if enabled
 resource "aws_security_group" "this" {
   count       = (var.use_existing_security_group || !var.enable) ? 0 : 1
@@ -78,6 +82,7 @@ resource "aws_redshift_cluster" "this" {
   number_of_nodes                     = var.cluster_config.number_of_nodes
   skip_final_snapshot                 = var.skip_final_snapshot
   publicly_accessible                 = var.cluster_config.publicly_accessible
+  kms_key_id                          = aws_kms_key.redshift.key_id
   automated_snapshot_retention_period = var.cluster_config.automated_snapshot_retention_period
   availability_zone                   = var.cluster_config.availability_zone
   cluster_subnet_group_name           = var.use_existing_subnet_group ? var.existing_subnet_group_name : aws_redshift_subnet_group.this[0].name
