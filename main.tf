@@ -1,7 +1,3 @@
-provider "aws" {
-  region = var.region
-}
-
 module "labels" {
   source  = "clouddrove/labels/aws"
   version = "1.3.0"
@@ -95,7 +91,7 @@ resource "aws_redshift_cluster" "this" {
 
 # Store the generated password in Secrets Manager after creating the Redshift cluster
 resource "aws_secretsmanager_secret" "master_password" {
-  name        = "${var.name}-master-password"
+  name        = "${var.name}-master-password-12"
   description = "Master password for Redshift cluster"
 }
 

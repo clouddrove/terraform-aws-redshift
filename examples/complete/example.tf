@@ -105,7 +105,7 @@ module "terraform-aws-redshift" {
   # Endpoint Access Configuration
   create_endpoint_access          = false
   endpoint_name                   = "example-endpoint"
-  endpoint_resource_owner         = "123456789101" # Replace with the actual AWS account ID
+  endpoint_resource_owner         = "924144197303" # Replace with the actual AWS account ID
   endpoint_subnet_group_name      = ""
   endpoint_vpc_security_group_ids = ["sg-xxxxxxxxxxxx"]
 }
