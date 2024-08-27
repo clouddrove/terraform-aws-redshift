@@ -91,7 +91,7 @@ resource "aws_redshift_cluster" "this" {
 
 # Store the generated password in Secrets Manager after creating the Redshift cluster
 resource "aws_secretsmanager_secret" "master_password" {
-  name        = "${var.name}-master-password-12"
+  name        = "${var.name}-master-password"
   description = "Master password for Redshift cluster"
 }
 
