@@ -15,4 +15,3 @@ jobs:
     with:
       working_directory: './examples/complete/'
 ...
-
