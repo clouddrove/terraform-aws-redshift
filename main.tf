@@ -184,5 +184,3 @@ resource "aws_redshift_endpoint_access" "this" {
   subnet_group_name      = coalesce(var.endpoint_subnet_group_name, local.subnet_group_name)
   vpc_security_group_ids = var.endpoint_vpc_security_group_ids
 }
-
-

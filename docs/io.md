@@ -54,4 +54,3 @@
 | redshift\_cluster\_master\_username | The master username of the Redshift cluster. |
 | security\_group\_id | The ID of the created security group. |
 | subnet\_group\_name | The name of the created subnet group. |
-
