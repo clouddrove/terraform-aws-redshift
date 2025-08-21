@@ -9,155 +9,183 @@ module "labels" {
   label_order = var.label_order
 }
 
+##-------------------------------------------------------------
+## KMS KEY FOR ENCRYPTION
+##-------------------------------------------------------------
 resource "aws_kms_key" "redshift" {
-  count               = var.encryption ? 1 : 0
-  enable_key_rotation = true
-
+  count                    = var.enable && var.enable_encryption && var.kms_key_arn == "" ? 1 : 0
+  description              = "Customer Managed KMS key for ${module.labels.id} Redshift."
+  key_usage                = var.key_usage
+  deletion_window_in_days  = var.deletion_window_in_days
+  is_enabled               = var.enable_encryption
+  enable_key_rotation      = var.enable_key_rotation
+  customer_master_key_spec = var.customer_master_key_spec
+  policy                   = var.kms_resource_policy
+  tags                     = module.labels.tags
 }
 
-# Create Security Group only if not using an existing one and if enabled
-resource "aws_security_group" "this" {
-  count       = (var.use_existing_security_group || !var.enable) ? 0 : 1
-  name        = var.cluster_config.security_group_name
-  description = "Security group for Redshift cluster"
-  vpc_id      = var.cluster_config.vpc_id
+resource "aws_kms_alias" "default" {
+  count         = var.enable && var.enable_encryption && var.kms_key_arn == "" ? 1 : 0
+  name          = coalesce(var.alias, format("alias/%v", module.labels.id))
+  target_key_id = aws_kms_key.redshift[count.index].key_id
+}
 
-  dynamic "ingress" {
-    for_each = var.ingress_rules
-    content {
-      from_port   = ingress.value.from_port
-      to_port     = ingress.value.to_port
-      protocol    = ingress.value.protocol
-      cidr_blocks = ingress.value.cidr_blocks
+##-------------------------------------------------------------
+## DEFAULT IAM ROLE FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
+module "redshift_iam_role" {
+  source  = "clouddrove/iam-role/aws"
+  version = "1.3.2"
+
+  enabled            = var.enable && var.create_iam_role ? true : false
+  name               = format("%s-role", module.labels.id)
+  assume_role_policy = var.assume_role_policy != "" ? var.assume_role_policy : data.aws_iam_policy_document.redshift[0].json
+  policy_enabled     = var.create_iam_role ? true : false
+  policy             = var.policy != "" ? var.policy : data.aws_iam_policy_document.permissions[0].json
+}
+
+data "aws_iam_policy_document" "redshift" {
+  count = var.enable && var.create_iam_role ? 1 : 0
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["redshift.amazonaws.com"]
     }
+
+    actions = ["sts:AssumeRole"]
   }
-
-  dynamic "egress" {
-    for_each = var.egress_rules
-    content {
-      from_port   = egress.value.from_port
-      to_port     = egress.value.to_port
-      protocol    = egress.value.protocol
-      cidr_blocks = egress.value.cidr_blocks
-    }
-  }
-
-  tags = var.tags
 }
 
-# Create Subnet Group only if not using an existing one and if enabled
-resource "aws_redshift_subnet_group" "this" {
-  count       = (var.use_existing_subnet_group || !var.enable) ? 0 : 1
-  name        = var.cluster_config.subnet_group_name
-  description = "Subnet group for Redshift cluster"
-  subnet_ids  = var.cluster_config.subnet_ids
-
-  tags = var.tags
-}
-
-# Generate a random password if needed
-resource "random_password" "master_password" {
-  count = var.create_random_password && (var.cluster_config.master_password == "" || var.cluster_config.master_password == null) ? 1 : 0
-
-  length           = var.random_password_length
-  min_lower        = 1
-  min_numeric      = 1
-  min_special      = 1
-  min_upper        = 1
-  special          = true
-  override_special = "!#$%&*()-_=+[]{}<>:?"
-}
-
-# Redshift Cluster
-resource "aws_redshift_cluster" "this" {
-  count                               = var.enable ? 1 : 0
-  cluster_identifier                  = var.cluster_config.cluster_identifier
-  database_name                       = var.cluster_config.database_name
-  master_username                     = var.cluster_config.master_username
-  master_password                     = var.create_random_password && (var.cluster_config.master_password == "" || var.cluster_config.master_password == null) ? random_password.master_password[0].result : var.cluster_config.master_password
-  node_type                           = var.cluster_config.node_type
-  cluster_type                        = var.cluster_config.cluster_type
-  number_of_nodes                     = var.cluster_config.number_of_nodes
-  skip_final_snapshot                 = var.skip_final_snapshot
-  publicly_accessible                 = var.cluster_config.publicly_accessible
-  kms_key_id                          = var.encryption ? aws_kms_key.redshift[0].arn : null
-  encrypted                           = var.encryption
-  automated_snapshot_retention_period = var.cluster_config.automated_snapshot_retention_period
-  availability_zone                   = var.cluster_config.availability_zone
-  cluster_subnet_group_name           = var.use_existing_subnet_group ? var.existing_subnet_group_name : aws_redshift_subnet_group.this[0].name
-  vpc_security_group_ids              = var.use_existing_security_group ? [var.existing_security_group_id] : [aws_security_group.this[0].id]
-  tags                                = var.tags
-}
-
-# Store the generated password in Secrets Manager after creating the Redshift cluster
-resource "aws_secretsmanager_secret" "master_password" {
-  name        = "${var.name}-master-password"
-  description = "Master password for Redshift cluster"
-}
-
-resource "aws_secretsmanager_secret_version" "master_password" {
-  secret_id     = aws_secretsmanager_secret.master_password.id
-  secret_string = aws_redshift_cluster.this[0].master_password
-
-  depends_on = [aws_redshift_cluster.this] # Ensure the secret is created after the Redshift cluster
-}
-
-# Create IAM Role
-resource "aws_iam_role" "redshift_role" {
-  count = var.create_iam_role ? 1 : 0
-
-  name        = var.iam_role_name
-  description = var.iam_role_description
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Service = "redshift.amazonaws.com"
-        }
-        Action = "sts:AssumeRole"
-      },
+data "aws_iam_policy_document" "permissions" {
+  count = var.enable && var.create_iam_role ? 1 : 0
+  statement {
+    sid    = "AllowLoggingToCloudWatch"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams"
     ]
-  })
+    resources = ["*"]
+  }
 
-  tags = var.tags
+  statement {
+    sid    = "S3ReadOnly"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket"
+    ]
+    resources = [
+      "arn:aws:s3:::*",
+      "arn:aws:s3:::*/*"
+    ]
+  }
+
+  statement {
+    sid    = "SecretsManagerReadOnly"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:ListSecrets"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "GlueReadOnly"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetDatabases",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetPartition",
+      "glue:GetPartitions",
+      "glue:BatchGetPartition"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "LambdaReadOnly"
+    effect = "Allow"
+    actions = [
+      "lambda:GetFunction",
+      "lambda:ListFunctions",
+      "lambda:GetFunctionConfiguration",
+      "lambda:ListAliases",
+      "lambda:ListVersionsByFunction"
+    ]
+    resources = ["*"]
+  }
 }
 
-# Create IAM Policy
-resource "aws_iam_policy" "redshift_policy" {
-  count = var.create_iam_role ? 1 : 0
-
-  name        = "${var.iam_role_name}-policy"
-  description = "Policy for the Redshift cluster IAM role"
-  policy      = var.iam_role_policy
-}
-
-# Attach IAM Policy to the IAM Role
-resource "aws_iam_role_policy_attachment" "attach_policy" {
-  count = var.create_iam_role ? 1 : 0
-
-  policy_arn = aws_iam_policy.redshift_policy[0].arn
-  role       = aws_iam_role.redshift_role[0].name
-}
-
-# Redshift Cluster IAM Roles
-# Redshift Cluster IAM Roles
 resource "aws_redshift_cluster_iam_roles" "this" {
-  count = var.enable && (length(var.iam_role_arns) > 0 || length(var.existing_iam_role_arns) > 0) ? 1 : 0
-
+  count                = var.enable ? 1 : 0
   cluster_identifier   = aws_redshift_cluster.this[0].id
-  iam_role_arns        = concat(var.iam_role_arns, var.existing_iam_role_arns)
-  default_iam_role_arn = var.default_iam_role_arn
+  iam_role_arns        = try(var.iam_role_arns, [])
+  default_iam_role_arn = var.create_iam_role ? module.redshift_iam_role.arn : var.default_iam_role_arn
 }
 
+##-------------------------------------------------------------
+## DEFAULT SECURITY FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
+module "security_group" {
+  source  = "clouddrove/security-group/aws"
+  version = "2.0.0"
+
+  enable = var.enable && var.create_security_group && var.security_group_ids == [] ? true : false
+
+  name   = format("%s-sg", module.labels.id)
+  vpc_id = var.cluster_config.vpc_id
+
+  ## INGRESS Rules
+  new_sg_ingress_rules_with_cidr_blocks = [{
+    rule_count  = 1
+    from_port   = 5439
+    protocol    = "tcp"
+    to_port     = 5439
+    cidr_blocks = var.allowed_ips
+    description = "Allow Redshift traffic."
+    }
+  ]
+
+  ## EGRESS Rules
+  new_sg_egress_rules_with_cidr_blocks = [{
+    rule_count  = 1
+    from_port   = 0
+    protocol    = "-1" # all protocols
+    to_port     = 0
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic."
+  }]
+}
+
+##-------------------------------------------------------------
+## DEFAULT SUBNET GROUP FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
+resource "aws_redshift_subnet_group" "this" {
+  count       = var.enable && var.create_subnet_group && var.existing_subnet_group_id == "" ? 1 : 0
+  name        = format("%s-subnet-group", module.labels.id)
+  description = "Subnet group for ${module.labels.id} Redshift cluster"
+  subnet_ids  = var.cluster_config.subnet_ids
+  tags        = merge(module.labels.tags, var.tags)
+}
+
+##-------------------------------------------------------------
+## DEFAULT PARAMETER GROUP FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
 resource "aws_redshift_parameter_group" "this" {
   count = var.enable && var.create_parameter_group ? 1 : 0
 
-  name        = coalesce(var.parameter_group_name, replace(var.cluster_config.cluster_identifier, ".", "-"))
-  description = var.parameter_group_description
-  family      = var.parameter_group_family
+  name        = format("%s-parameter-group", module.labels.id)
+  description = "Parameter group for ${module.labels.id} Redshift Cluster"
+  family      = var.cluster_config.parameter_group_family
 
   dynamic "parameter" {
     for_each = var.parameter_group_parameters
@@ -167,22 +195,73 @@ resource "aws_redshift_parameter_group" "this" {
     }
   }
 
-  tags = merge(var.tags, var.parameter_group_tags)
+  tags = merge(module.labels.tags, var.tags)
 }
 
-locals {
-  subnet_group_name = "example-subnet-group" # Update this value to your actual subnet group name
+##-------------------------------------------------------------
+## MANAGED PASSWORD FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
+resource "random_password" "master_password" {
+  count = var.enable && var.create_random_password ? 1 : 0
+
+  length           = var.random_password_length
+  min_lower        = 1
+  min_numeric      = 1
+  min_special      = 1
+  min_upper        = 1
+  special          = var.override_special != "" ? true : false
+  override_special = var.override_special
 }
 
+resource "aws_secretsmanager_secret" "master_password" {
+  count       = var.enable && var.create_secret_manager ? 1 : 0
+  name        = format("%s-master-password", module.labels.id)
+  description = "Master password for ${module.labels.id} Redshift cluster"
+}
+
+resource "aws_secretsmanager_secret_version" "master_password" {
+  count         = var.enable && var.create_secret_manager ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.master_password[count.index].id
+  secret_string = aws_redshift_cluster.this[0].master_password
+
+  depends_on = [aws_redshift_cluster.this] # Ensure the secret is created after the Redshift cluster
+}
+
+##-------------------------------------------------------------
+## REDSHIFT CLUSTER
+##-------------------------------------------------------------
+# https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/redshift_cluster
+
+resource "aws_redshift_cluster" "this" {
+  count                               = var.enable ? 1 : 0
+  cluster_identifier                  = try(var.cluster_config.cluster_identifier, module.labels.id)
+  database_name                       = try(var.cluster_config.database_name, "redshift")
+  master_username                     = try(var.cluster_config.master_username, "redshift")
+  master_password                     = var.create_random_password ? random_password.master_password[0].result : var.cluster_config.master_password
+  node_type                           = var.cluster_config.node_type
+  cluster_type                        = var.cluster_config.cluster_type
+  number_of_nodes                     = var.cluster_config.number_of_nodes
+  skip_final_snapshot                 = var.skip_final_snapshot
+  publicly_accessible                 = var.cluster_config.publicly_accessible
+  kms_key_id                          = var.enable_encryption == false ? null : ((var.enable_encryption && var.kms_key_arn) == "" ? aws_kms_key.redshift[0].arn : var.kms_key_arn)
+  encrypted                           = var.enable_encryption
+  automated_snapshot_retention_period = var.cluster_config.automated_snapshot_retention_period
+  availability_zone                   = var.cluster_config.availability_zone
+  cluster_subnet_group_name           = var.create_subnet_group ? aws_redshift_subnet_group.this[0].name : var.existing_subnet_group_id
+  cluster_parameter_group_name        = var.create_parameter_group ? aws_redshift_parameter_group.this[0].id : var.parameter_group_name
+  vpc_security_group_ids              = var.create_security_group ? module.security_group.security_group_id : var.security_group_ids
+  tags                                = var.tags
+}
+
+##-------------------------------------------------------------
+## ENABLE TO MANAGE ENDPOINT ACCESS FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
 resource "aws_redshift_endpoint_access" "this" {
   count = var.enable && var.create_endpoint_access ? 1 : 0
 
-  cluster_identifier = aws_redshift_cluster.this[0].id
-
-  endpoint_name          = var.endpoint_name
+  cluster_identifier     = aws_redshift_cluster.this[0].id
+  endpoint_name          = format("%s-endpoint", module.labels.id)
   resource_owner         = var.endpoint_resource_owner
-  subnet_group_name      = coalesce(var.endpoint_subnet_group_name, local.subnet_group_name)
-  vpc_security_group_ids = var.endpoint_vpc_security_group_ids
+  subnet_group_name      = var.create_subnet_group ? aws_redshift_subnet_group.this[0].id : var.existing_subnet_group_id
+  vpc_security_group_ids = var.create_security_group && var.endpoint_vpc_security_group_ids == [] ? module.security_group.security_group_id : var.endpoint_vpc_security_group_ids
 }
-
-
