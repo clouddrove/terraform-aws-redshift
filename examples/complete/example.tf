@@ -1,135 +1,283 @@
 provider "aws" {
-  region = "us-east-1"
+  region = local.region
 }
 
 locals {
-  environment = "test-app"
-  label_order = ["name", "environment"]
+  name        = "redshift"
+  environment = "test"
+  label_order = ["environment", "name"]
+  region      = "us-east-1"
 }
 
-module "terraform-aws-redshift" {
-  source = "../../"
+##--------------------------------------------------------
+## VPC MODULE CALL
+##--------------------------------------------------------
+module "vpc" {
+  source  = "clouddrove/vpc/aws"
+  version = "2.0.0"
 
-  enable              = true
-  region              = "us-east-1"
-  name                = "example-redshift-cluster"
-  repository          = "example-repo"
-  environment         = local.environment
-  managedby           = "terraform"
-  label_order         = local.label_order
-  skip_final_snapshot = true
-  encryption          = true
-  tags = {
-    Environment = local.environment
-    ManagedBy   = "terraform"
-  }
+  name        = "${local.name}-vpc"
+  environment = local.environment
+  label_order = local.label_order
 
-  use_existing_security_group = false
-  existing_security_group_id  = ""
+  cidr_block = "10.10.0.0/16"
+}
 
-  use_existing_subnet_group  = false
-  existing_subnet_group_name = ""
+##--------------------------------------------------------
+## SUBNET MODULE CALL
+##--------------------------------------------------------
 
-  ingress_rules = [
+module "subnets" {
+  source  = "clouddrove/subnet/aws"
+  version = "2.0.0"
+
+  name        = "${local.name}-subnet"
+  environment = local.environment
+  label_order = local.label_order
+
+  nat_gateway_enabled = true
+  single_nat_gateway  = true
+  availability_zones  = ["${local.region}a", "${local.region}b", "${local.region}c"]
+  vpc_id              = module.vpc.vpc_id
+  type                = "public-private"
+  igw_id              = module.vpc.igw_id
+  cidr_block          = "10.10.0.0/16"
+
+  public_inbound_acl_rules = [
     {
-      from_port   = 5439
-      to_port     = 5439
-      protocol    = "tcp"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-
-  egress_rules = [
-    {
+      rule_number = 1
+      rule_action = "allow"
       from_port   = 0
       to_port     = 0
       protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
+      cidr_block  = "0.0.0.0/0"
+    },
+    {
+      rule_number     = 101
+      rule_action     = "allow"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      ipv6_cidr_block = "::/0"
     }
   ]
 
+  public_outbound_acl_rules = [
+    {
+      rule_number = 100
+      rule_action = "allow"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_block  = "0.0.0.0/0"
+    },
+    {
+      rule_number     = 101
+      rule_action     = "allow"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      ipv6_cidr_block = "::/0"
+    },
+  ]
+
+  private_inbound_acl_rules = [
+    {
+      rule_number = 100
+      rule_action = "allow"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_block  = "0.0.0.0/0"
+    },
+    {
+      rule_number     = 101
+      rule_action     = "allow"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      ipv6_cidr_block = "::/0"
+    },
+  ]
+
+  private_outbound_acl_rules = [
+    {
+      rule_number = 100
+      rule_action = "allow"
+      from_port   = 0
+      to_port     = 0
+      protocol    = "-1"
+      cidr_block  = "0.0.0.0/0"
+    },
+    {
+      rule_number     = 101
+      rule_action     = "allow"
+      from_port       = 0
+      to_port         = 0
+      protocol        = "-1"
+      ipv6_cidr_block = "::/0"
+    },
+  ]
+}
+
+##--------------------------------------------------------
+## REDSHIFT MODULE CALL
+##--------------------------------------------------------
+module "redshift" {
+  source = "../../"
+
+  enable      = true
+  name        = local.name
+  environment = local.environment
+  label_order = local.label_order
+
+  override_special = true
   cluster_config = {
-    cluster_identifier                  = "example-cluster"
-    database_name                       = "exampledb"
+    database_name                       = "redshiftdb"
     master_username                     = "admin"
-    master_password                     = "" # Leave this empty to trigger random password generation
-    node_type                           = "dc2.large"
-    cluster_type                        = "multi-node"
-    number_of_nodes                     = 2
-    publicly_accessible                 = true
-    automated_snapshot_retention_period = 0
-    availability_zone                   = "us-east-1a"
-    subnet_group_name                   = "example-subnet-group"
-    subnet_ids                          = tolist(module.public_subnets.public_subnet_id)
+    master_password                     = "" # -- Leave this empty to trigger random password generation
+    cluster_type                        = "single-node"
+    node_type                           = "ra3.large"
+    parameter_group_family              = "redshift-2.0"
+    number_of_nodes                     = 1
+    automated_snapshot_retention_period = 1
+    availability_zone                   = "${local.region}a"
+    subnet_ids                          = module.subnets.private_subnet_id
     vpc_id                              = module.vpc.vpc_id
-    security_group_name                 = "example-sg"
+    publicly_accessible                 = false
   }
+  enable_encryption       = true
+  kms_key_arn             = "arn:aws:kms:${local.region}:123456789012:key/a1b2c3d4-a1b2-c1d2-e1f2-a1b2c3d4e5f6" # -- if `kms_key_arn` not provided, a customer managed will be created by module by default.
+  enable_key_rotation     = false
+  deletion_window_in_days = 7
 
-  create_random_password = true # Set to true to enable random password generation
-  random_password_length = 16
+  create_iam_role      = false                        # -- if set to `true`, a default iam role will be created with permission of ReadOnly Access to CloudwatchLogs, S3, SecretManager, Glue, Lambda
+  default_iam_role_arn = module.redshift_iam_role.arn # -- Required only when `create_iam_role = false`
+  iam_role_arns        = ["arn:aws:iam::123456789012:role/redshift-s3-admin-access", "arn:aws:iam::123456789012:role/redshift-secrets-admin-access", "arn:aws:iam::123456789012:role/redshift-logs-admin-access"]
 
-  # Parameter Group Settings
-  create_parameter_group      = true
-  parameter_group_name        = "example-parameter-group"
-  parameter_group_description = "Parameter group for Redshift"
-  parameter_group_family      = "redshift-1.0"
-  parameter_group_parameters = [
+  create_security_group = false # -- if set to `true`, a default security-group will be created with InBound(5439) & OutBound(All)
+  security_group_ids    = ["sg-xxxxxx1", "sg-xxxxxx2", "sg-xxxxxx3"]
+
+  create_subnet_group      = false # -- if set to `true`, a default redshift subnet group will be created.
+  existing_subnet_group_id = "my-redshift-subnet-group"
+
+  create_parameter_group = false # -- if set to `true`, a default redshift parameter group will be created.
+  parameter_group_name   = "my-redshift-parameter-group"
+  parameter_group_parameters = [ # -- Only applicable if `create_parameter_group = true` and `parameter_group_name` is empty
+    {
+      name  = "require_ssl"
+      value = "true"
+    },
+    {
+      name  = "query_group"
+      value = "example"
+    },
     {
       name  = "enable_user_activity_logging"
       value = "true"
     }
   ]
-  parameter_group_tags = {
-    Environment = local.environment
-    ManagedBy   = "terraform"
-  }
 
-  create_iam_role      = true
-  iam_role_name        = "example-redshift-role"
-  iam_role_description = "IAM role for Redshift"
-  iam_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action   = "s3:*"
-        Effect   = "Allow"
-        Resource = "*"
-      },
-    ]
-  })
+  create_endpoint_access          = true
+  endpoint_vpc_security_group_ids = ["sg-xxxxx4"] # -- Required if `create_security_group` set to `false`
 
-  # Add existing roles if necessary
-  iam_role_arns        = [] # Use existing roles if needed, e.g., ["arn:aws:iam::123456789012:role/ExistingRole"]
-  default_iam_role_arn = "" # Use the default IAM role ARN if applicable
-
-  # Endpoint Access Configuration
-  create_endpoint_access          = false
-  endpoint_name                   = "example-endpoint"
-  endpoint_resource_owner         = "924144197303" # Replace with the actual AWS account ID
-  endpoint_subnet_group_name      = ""
-  endpoint_vpc_security_group_ids = ["sg-xxxxxxxxxxxx"]
 }
 
+##-------------------------------------------------------------
+## DEFAULT IAM ROLE FOR REDSHIFT CLUSTER
+##-------------------------------------------------------------
+module "redshift_iam_role" {
+  source  = "clouddrove/iam-role/aws"
+  version = "1.3.2"
 
-module "vpc" {
-  source      = "clouddrove/vpc/aws"
-  version     = "2.0.0"
-  name        = "vpc"
+  name        = "${local.name}-role"
   environment = local.environment
   label_order = local.label_order
-  cidr_block  = "172.16.0.0/16"
+
+  assume_role_policy  = data.aws_iam_policy_document.redshift.json
+  policy_enabled      = false
+  policy              = data.aws_iam_policy_document.permissions.json
+  managed_policy_arns = ["arn:aws:iam::aws:policy/AmazonRedshiftAllCommandsFullAccess"]
 }
 
-module "public_subnets" {
-  source             = "clouddrove/subnet/aws"
-  version            = "2.0.1"
-  name               = "public-subnet"
-  environment        = local.environment
-  label_order        = local.label_order
-  availability_zones = ["us-east-1a", "us-east-1b"]
-  vpc_id             = module.vpc.vpc_id
-  cidr_block         = module.vpc.vpc_cidr_block
-  type               = "public"
-  igw_id             = module.vpc.igw_id
-  ipv6_cidr_block    = module.vpc.ipv6_cidr_block
+data "aws_iam_policy_document" "redshift" {
+  statement {
+    effect = "Allow"
+    principals {
+      type = "Service"
+      identifiers = [
+        "sagemaker.amazonaws.com",
+        "redshift.amazonaws.com",
+        "redshift-serverless.amazonaws.com",
+      ]
+    }
+    actions = ["sts:AssumeRole"]
+  }
 }
+
+data "aws_iam_policy_document" "permissions" {
+  statement {
+    sid    = "AllowLoggingToCloudWatch"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "S3ReadOnly"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:ListBucket"
+    ]
+    resources = [
+      "arn:aws:s3:::*",
+      "arn:aws:s3:::*/*"
+    ]
+  }
+
+  statement {
+    sid    = "SecretsManagerReadOnly"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:ListSecrets"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "GlueReadOnly"
+    effect = "Allow"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetDatabases",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetPartition",
+      "glue:GetPartitions",
+      "glue:BatchGetPartition"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "LambdaReadOnly"
+    effect = "Allow"
+    actions = [
+      "lambda:GetFunction",
+      "lambda:ListFunctions",
+      "lambda:GetFunctionConfiguration",
+      "lambda:ListAliases",
+      "lambda:ListVersionsByFunction"
+    ]
+    resources = ["*"]
+  }
+}
+
