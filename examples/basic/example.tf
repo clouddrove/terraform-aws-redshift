@@ -123,7 +123,7 @@ module "subnets" {
 ##--------------------------------------------------------
 ## REDSHIFT MODULE CALL
 ##--------------------------------------------------------
-module "terraform-aws-redshift" {
+module "redshift" {
   source = "../../"
 
   enable      = true
@@ -131,18 +131,21 @@ module "terraform-aws-redshift" {
   environment = local.environment
   label_order = local.label_order
 
+  override_special    = "!#$%&*()-_=+[]{}<>:?"
+  managed_policy_arns = ["arn:aws:iam::aws:policy/AmazonRedshiftAllCommandsFullAccess"]
+
   cluster_config = {
     database_name                       = "redshiftdb"
     master_username                     = "admin"
-    master_password                     = ""          # Leave this empty to trigger random password generation
-    node_type                           = "dc1.large" # "ra3.large"
+    master_password                     = "" # Leave this empty to trigger random password generation
+    node_type                           = "ra3.large"
     cluster_type                        = "single-node"
     parameter_group_family              = "redshift-2.0"
-    number_of_nodes                     = 2
-    publicly_accessible                 = true
-    automated_snapshot_retention_period = 0
+    number_of_nodes                     = 1
+    automated_snapshot_retention_period = 1
     availability_zone                   = "${local.region}a"
     subnet_ids                          = module.subnets.private_subnet_id
     vpc_id                              = module.vpc.vpc_id
   }
 }
+

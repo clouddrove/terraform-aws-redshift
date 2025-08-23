@@ -118,6 +118,12 @@ variable "assume_role_policy" {
   description = "Whether to create Iam role."
 }
 
+variable "managed_policy_arns" {
+  type        = list(any)
+  default     = []
+  description = "Set of exclusive IAM managed policy ARNs to attach to the IAM role"
+}
+
 variable "policy" {
   type        = string
   default     = ""
@@ -236,24 +242,26 @@ variable "use_existing_subnet_group" {
 variable "cluster_config" {
   description = "Configuration map for the Redshift cluster"
   type = object({
-    database_name                       = string
-    master_username                     = string
-    master_password                     = string
-    node_type                           = string
-    cluster_type                        = string
-    number_of_nodes                     = number
-    publicly_accessible                 = bool
-    automated_snapshot_retention_period = number
-    availability_zone                   = string
-    parameter_group_family              = string # "(Required) The family of the Redshift parameter group. (e.g., redshift-1.0, redshift-1.1)."
-    subnet_ids                          = list(string)
-    vpc_id                              = string
+    database_name                       = optional(string, null)
+    master_username                     = optional(string, null)
+    master_password                     = optional(string, null)
+    number_of_nodes                     = optional(number, null)
+    publicly_accessible                 = optional(bool, null)
+    availability_zone                   = optional(string, null)
+    subnet_ids                          = optional(list(string), [])
+    vpc_id                              = optional(string, null)
+    cluster_type                        = optional(string, null) # valid values are - single-node, multi-node.
+    node_type                           = optional(string, null) # valid values are ra3.large, ra3.xplus, ra3.4xlarge, ra3.16xlarge
+    automated_snapshot_retention_period = optional(number, null) # valid values are 1 to 35 (days).
+    parameter_group_family              = optional(string, null) # valid values are redshift-1.0, redshift-2.0
   })
+
+  default = {}
 }
 
 variable "skip_final_snapshot" {
   type        = bool
-  default     = false
+  default     = true
   description = "(Optional) Determines whether a final snapshot of the cluster is created before Amazon Redshift deletes the cluster. If true , a final cluster snapshot is not created. If false , a final cluster snapshot is created before the cluster is deleted. Default is false."
 }
 
