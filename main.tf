@@ -35,7 +35,7 @@ resource "aws_kms_alias" "default" {
 ##-------------------------------------------------------------
 module "redshift_iam_role" {
   source  = "clouddrove/iam-role/aws"
-  version = "1.3.2"
+  version = "1.3.4"
 
   enabled             = var.enable && var.create_iam_role ? true : false
   name                = format("%s-role", module.labels.id)
