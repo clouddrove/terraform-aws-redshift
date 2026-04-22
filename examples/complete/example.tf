@@ -188,7 +188,7 @@ module "redshift" {
 ##-------------------------------------------------------------
 module "redshift_iam_role" {
   source  = "clouddrove/iam-role/aws"
-  version = "1.3.3"
+  version = "1.3.4"
 
   name        = "${local.name}-role"
   environment = local.environment
