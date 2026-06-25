@@ -14,7 +14,7 @@ locals {
 ##--------------------------------------------------------
 module "vpc" {
   source  = "clouddrove/vpc/aws"
-  version = "2.0.0"
+  version = "2.0.5"
 
   name        = "${local.name}-vpc"
   environment = local.environment
@@ -29,7 +29,7 @@ module "vpc" {
 
 module "subnets" {
   source  = "clouddrove/subnet/aws"
-  version = "2.0.1"
+  version = "2.0.3"
 
   name        = "${local.name}-subnet"
   environment = local.environment
@@ -188,7 +188,7 @@ module "redshift" {
 ##-------------------------------------------------------------
 module "redshift_iam_role" {
   source  = "clouddrove/iam-role/aws"
-  version = "1.3.3"
+  version = "1.4.0"
 
   name        = "${local.name}-role"
   environment = local.environment
