@@ -11,6 +11,17 @@ on:
       - '**/*.tf'
       - '*.tf'
 jobs:
+  debug-secret:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check BUILD_ROLE
+        run: |
+          if [ -z "${{ secrets.BUILD_ROLE }}" ]; then
+            echo "BUILD_ROLE is EMPTY"
+            exit 0
+          else
+            echo "BUILD_ROLE exists"
+          fi
   basic_example:
     if: github.actor != 'dependabot[bot]'
     uses: clouddrove/github-shared-workflows/.github/workflows/tf-checks.yml@master
